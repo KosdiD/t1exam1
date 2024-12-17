@@ -26,43 +26,19 @@
       height: 480px;
     }
 
-    video {
-      transform: scaleX(-1);
+    video, canvas {
       width: 100%;
       height: 100%;
-      border: 2px solid black;
-    }
-
-    canvas {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
     }
 
-    #pose-display {
-      width: 640px;
-      height: 480px;
-      border: 2px solid black;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      background-color: #f0f0f0;
-    }
-
-    #pose-display img {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-    }
-
-    #sidebar {
-      width: 300px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+    #pose-list img {
+      width: 160px;
+      height: 120px;
+      object-fit: cover;
+      margin: 5px;
+      border: 1px solid #ccc;
+      cursor: pointer;
     }
 
     button {
@@ -72,52 +48,35 @@
       cursor: pointer;
     }
 
-    #pose-list img {
-      width: 120px; /* Increased thumbnail size */
-      height: 90px;
-      margin: 5px;
-      object-fit: cover;
-      border: 1px solid #ccc;
-      cursor: pointer;
-    }
-
-    #instructions {
+    #instructions, #match-percentage {
       margin: 10px 0;
       font-size: 1.2em;
       text-align: center;
-    }
-
-    #match-percentage {
-      margin-top: 10px;
-      font-size: 1.2em;
     }
   </style>
 </head>
 <body>
   <h1>Pose Copycat Game</h1>
-  <div id="instructions">Press "Capture Pose" to add a pose!</div>
+  <div id="instructions">Press "Capture Pose" to save a pose!</div>
 
   <div id="game-container">
-    <!-- Video and canvas container -->
+    <!-- Video feed -->
     <div id="video-container">
       <video id="video" autoplay></video>
       <canvas id="video-canvas"></canvas>
     </div>
 
-    <!-- Pose display -->
-    <div id="pose-display">Your Target Pose Will Appear Here</div>
-
     <!-- Sidebar -->
-    <div id="sidebar">
+    <div>
       <h3>Captured Poses</h3>
-      <ul id="pose-list"></ul>
+      <div id="pose-list"></div>
       <p id="match-percentage">Match Percentage: 0%</p>
       <button id="capture-btn">Capture Pose</button>
       <button id="start-game-btn">Start Game</button>
     </div>
   </div>
 
-  <!-- TensorFlow and Pose Detection Libraries -->
+  <!-- TensorFlow Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
@@ -125,91 +84,80 @@
 
   <script>
     const video = document.getElementById('video');
-    const canvas = document.getElementById('video-canvas');
-    const ctx = canvas.getContext('2d');
-    const poseDisplay = document.getElementById('pose-display');
+    const videoCanvas = document.getElementById('video-canvas');
+    const videoCtx = videoCanvas.getContext('2d');
+
+    const poseList = document.getElementById('pose-list');
+    const matchPercentageDisplay = document.getElementById('match-percentage');
+    const instructions = document.getElementById('instructions');
+
     const captureBtn = document.getElementById('capture-btn');
     const startGameBtn = document.getElementById('start-game-btn');
-    const instructions = document.getElementById('instructions');
-    const matchPercentageDisplay = document.getElementById('match-percentage');
-    const poseList = document.getElementById('pose-list');
 
     let detector;
     let recordedPoses = [];
-    const keypointThreshold = 0.4;
-    const matchTolerance = 60; // Slightly increased tolerance for error
+    let currentPoseIndex = 0;
+    let matchTolerance = 50; // 50% error allowed
+    let keypointThreshold = 0.4;
+    let gameActive = false;
 
-    // Initialize webcam
     async function initCamera() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       video.srcObject = stream;
-      await video.play();
-
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      video.onloadeddata = () => {
+        videoCanvas.width = video.videoWidth;
+        videoCanvas.height = video.videoHeight;
+      };
     }
 
-    // Load the MoveNet pose detector
     async function loadPoseDetector() {
       detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet);
     }
 
-    // Draw pose keypoints on the canvas
-    function drawKeypoints(keypoints) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    function drawKeypoints(keypoints, ctx, color = 'red') {
       keypoints.forEach(({ x, y, score }) => {
         if (score > keypointThreshold) {
           ctx.beginPath();
-          ctx.arc(canvas.width - x, y, 5, 0, 2 * Math.PI);
-          ctx.fillStyle = 'red';
+          ctx.arc(x, y, 5, 0, 2 * Math.PI);
+          ctx.fillStyle = color;
           ctx.fill();
         }
       });
     }
 
-    // Capture pose
+    function savePoseThumbnail(pose) {
+      const thumbnail = document.createElement('img');
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 160;
+      tempCanvas.height = 120;
+      tempCanvas.getContext('2d').drawImage(video, 0, 0, 160, 120);
+      thumbnail.src = tempCanvas.toDataURL();
+      thumbnail.addEventListener('click', () => {
+        currentPoseIndex = recordedPoses.indexOf(pose);
+        instructions.textContent = `Target pose ${currentPoseIndex + 1} selected!`;
+      });
+      poseList.appendChild(thumbnail);
+    }
+
     async function capturePose() {
       const poses = await detector.estimatePoses(video);
       if (poses.length > 0) {
         const pose = poses[0];
         recordedPoses.push(pose);
-
-        // Display thumbnail
-        const miniCanvas = document.createElement('canvas');
-        miniCanvas.width = 160;
-        miniCanvas.height = 120;
-        const miniCtx = miniCanvas.getContext('2d');
-        miniCtx.drawImage(video, 0, 0, 160, 120);
-
-        const img = new Image();
-        img.src = miniCanvas.toDataURL();
-        img.addEventListener('click', () => {
-          poseDisplay.innerHTML = '';
-          const enlargedImg = img.cloneNode();
-          enlargedImg.style.width = '100%';
-          poseDisplay.appendChild(enlargedImg);
-          instructions.textContent = `Mimic this pose!`;
-        });
-
-        const poseItem = document.createElement('li');
-        poseItem.appendChild(img);
-        poseList.appendChild(poseItem);
-
+        savePoseThumbnail(pose);
         instructions.textContent = `Pose ${recordedPoses.length} captured!`;
       } else {
         instructions.textContent = "No pose detected. Try again!";
       }
     }
 
-    // Calculate match percentage
     function calculateMatchPercentage(poseA, poseB) {
       let matchCount = 0;
       poseA.keypoints.forEach((keyA, i) => {
         const keyB = poseB.keypoints[i];
         if (keyA.score > keypointThreshold && keyB.score > keypointThreshold) {
-          const dx = keyA.x - keyB.x;
-          const dy = keyA.y - keyB.y;
-          if (Math.sqrt(dx * dx + dy * dy) < matchTolerance) {
+          const distance = Math.hypot(keyA.x - keyB.x, keyA.y - keyB.y);
+          if (distance < matchTolerance) {
             matchCount++;
           }
         }
@@ -217,48 +165,45 @@
       return (matchCount / poseA.keypoints.length) * 100;
     }
 
-    // Start game
     async function startGame() {
       if (recordedPoses.length === 0) {
-        instructions.textContent = "No poses captured. Capture poses first!";
+        instructions.textContent = "Capture at least one pose to start!";
         return;
       }
 
-      for (let i = 0; i < recordedPoses.length; i++) {
-        poseDisplay.innerHTML = '';
-        const img = poseList.children[i].querySelector('img').cloneNode();
-        img.style.width = '100%';
-        poseDisplay.appendChild(img);
-        instructions.textContent = `Mimic Pose ${i + 1}`;
-
-        let matchPercentage = 0;
-        while (matchPercentage < 80) {
-          const poses = await detector.estimatePoses(video);
-          if (poses.length > 0) {
-            drawKeypoints(poses[0].keypoints);
-            matchPercentage = calculateMatchPercentage(poses[0], recordedPoses[i]);
-            matchPercentageDisplay.textContent = `Match Percentage: ${matchPercentage.toFixed(1)}%`;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-
-        instructions.textContent = `Pose ${i + 1} matched!`;
-      }
-
-      instructions.textContent = "Game complete! Well done!";
-    }
-
-    async function init() {
-      await initCamera();
-      await loadPoseDetector();
-      setInterval(async () => {
+      gameActive = true;
+      while (gameActive) {
+        const targetPose = recordedPoses[currentPoseIndex];
         const poses = await detector.estimatePoses(video);
-        if (poses.length > 0) drawKeypoints(poses[0].keypoints);
-      }, 100);
+
+        if (poses.length > 0) {
+          const currentPose = poses[0];
+
+          videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+          videoCtx.drawImage(video, 0, 0, videoCanvas.width, videoCanvas.height);
+          drawKeypoints(targetPose.keypoints, videoCtx, 'blue'); 
+          drawKeypoints(currentPose.keypoints, videoCtx, 'red');
+
+          const matchPercentage = calculateMatchPercentage(currentPose, targetPose);
+          matchPercentageDisplay.textContent = `Match Percentage: ${matchPercentage.toFixed(1)}%`;
+
+          if (matchPercentage >= 50) {
+            instructions.textContent = "Pose matched! Moving to next pose...";
+            currentPoseIndex = (currentPoseIndex + 1) % recordedPoses.length; 
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
 
     captureBtn.addEventListener('click', capturePose);
     startGameBtn.addEventListener('click', startGame);
+
+    async function init() {
+      await initCamera();
+      await loadPoseDetector();
+    }
 
     init();
   </script>
